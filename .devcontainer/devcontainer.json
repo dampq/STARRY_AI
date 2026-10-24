@@ -1,10 +1,18 @@
 {
   "name": "Starry AI",
-  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-24-bookworm",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:5.2.3-24-bookworm",
   "postCreateCommand": "npm ci --no-audit --no-fund",
-  "forwardPorts": [5173],
+  "forwardPorts": [
+    5173
+  ],
   "portsAttributes": {
-    "5173": { "label": "Starry AI", "onAutoForward": "openBrowser" },
-    "3001": { "label": "Internal story API", "onAutoForward": "ignore" }
+    "5173": {
+      "label": "Starry AI",
+      "onAutoForward": "openBrowser"
+    },
+    "3001": {
+      "label": "Internal story API",
+      "onAutoForward": "ignore"
+    }
   }
 }
