@@ -212,6 +212,29 @@ describe("native Gemini structured adapter", () => {
     ).rejects.toThrow("timed out");
     expect(offline).toHaveBeenCalledTimes(2);
   });
+  it("reports Gemini capacity errors separately after the bounded retry", async () => {
+    const fetcher = transport().mockImplementation(async () =>
+      Response.json(
+        { error: { message: "private provider diagnostic" } },
+        { status: 503 },
+      ),
+    );
+    await expect(
+      new GeminiProvider("test-key", "gemini-3.8-flash", fetcher).plan({}),
+    ).rejects.toMatchObject({
+      status: 503,
+      message: expect.stringContaining("HTTP 503"),
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+  it("enforces array bounds locally even when they are omitted from Gemini's grammar", async () => {
+    const fetcher = transport().mockResolvedValue(
+      response({ ...proposal(), choices: [proposal().choices[0]] }),
+    );
+    await expect(
+      new GeminiProvider("test-key", "gemini-3.8-flash", fetcher).generate({}),
+    ).rejects.toBeInstanceOf(z.ZodError);
+  });
   it("rejects large contexts and untrusted model paths before sending requests", async () => {
     const fetcher = transport();
     await expect(
@@ -240,7 +263,8 @@ describe("native Gemini structured adapter", () => {
     expect(
       (props.nested.items as { properties: unknown }).properties,
     ).toHaveProperty("format");
-    expect(props.nested.maxItems).toBe(4);
+    expect(props.nested).not.toHaveProperty("maxItems");
+    expect(props.nested).not.toHaveProperty("minItems");
     expect(schema).not.toHaveProperty("$schema");
   });
 });

@@ -26,7 +26,9 @@ const EnvelopeSchema = z.object({
 const transient = new Set([429, 500, 502, 503, 504]);
 // Google's REST JSON Schema contract: googleapis/googleapis,
 // google/ai/generativelanguage/v1beta/generative_service.proto (GenerationConfig).
-// Unsupported schema keywords stay enforced locally by Zod.
+// String and array bounds stay enforced locally by Zod. Avoid array bounds
+// in the provider schema: combining many bounded nested arrays can exceed
+// Gemini's structured-output grammar complexity, even for a small schema.
 const supported = new Set([
   "$id",
   "$defs",
@@ -39,8 +41,6 @@ const supported = new Set([
   "enum",
   "items",
   "prefixItems",
-  "minItems",
-  "maxItems",
   "minimum",
   "maximum",
   "anyOf",
@@ -163,6 +163,11 @@ export class GeminiProvider extends StructuredProvider {
           throw new AppError(
             503,
             "Gemini rejected the configured model or structured request. Check GEMINI_MODEL and its Structured Outputs support.",
+          );
+        if (response.status === 503)
+          throw new AppError(
+            503,
+            "Gemini is busy or temporarily unavailable (HTTP 503). Wait a minute, then retry this saved draft.",
           );
         throw new AppError(
           502,
