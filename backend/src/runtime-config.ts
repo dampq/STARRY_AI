@@ -27,3 +27,24 @@ export function readAppOrigin(env: Record<string, string | undefined>) {
   }
   return configured.origin;
 }
+
+/** A Codespaces tunnel can rewrite the browser Origin to the local Vite URL.
+ * Only accept those exact local origins on the actual loopback proxy socket.
+ * X-Forwarded-For is deliberately not used to establish this trust.
+ */
+export function acceptsRequestOrigin(
+  received: string,
+  expected: string,
+  trustLocalProxy: boolean,
+  remoteAddress: string | undefined,
+) {
+  if (received === expected) return true;
+  const loopbackSocket = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
+    remoteAddress || "",
+  );
+  return (
+    trustLocalProxy &&
+    loopbackSocket &&
+    ["http://localhost:5173", "http://127.0.0.1:5173"].includes(received)
+  );
+}

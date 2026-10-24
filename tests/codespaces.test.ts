@@ -4,6 +4,7 @@ import { vi } from "vitest";
 import {
   readAppOrigin,
   codespacesHostname,
+  acceptsRequestOrigin,
 } from "../backend/src/runtime-config";
 import { createApp } from "../backend/src/app";
 
@@ -107,5 +108,73 @@ describe("Codespaces same-origin development", () => {
       generationLimit: 30,
     });
     expect(local.get("trust proxy")).toBe(false);
+  });
+  it("accepts tunnel-rewritten localhost origins without bypassing authentication", async () => {
+    const app = createApp({
+      model: "test",
+      origin: readAppOrigin(env),
+      generationLimit: 30,
+      trustLocalProxy: true,
+      supabaseUrl: "https://example.supabase.co",
+      anonKey: "test-anon",
+      serviceKey: "test-service",
+    });
+    for (const origin of [
+      readAppOrigin(env),
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+    ]) {
+      const response = await request(app)
+        .post("/api/stories")
+        .set("Origin", origin)
+        .send({});
+      expect(response.status, origin).toBe(401);
+      expect(response.body.error).toBe("Please sign in to continue.");
+    }
+    for (const origin of [
+      "https://evil.example",
+      "https://other-5173.app.github.dev",
+      "http://localhost:5174",
+      "null",
+    ]) {
+      const response = await request(app)
+        .post("/api/stories")
+        .set("Origin", origin)
+        .send({});
+      expect(response.status, origin).toBe(403);
+      expect(response.body.error).toContain(
+        "Expected https://starry-example-123-5173.app.github.dev",
+      );
+    }
+  });
+  it("never trusts rewritten origins from non-loopback peers or outside proxy mode", () => {
+    const expected = readAppOrigin(env);
+    expect(
+      acceptsRequestOrigin(
+        "http://localhost:5173",
+        expected,
+        true,
+        "203.0.113.20",
+      ),
+    ).toBe(false);
+    expect(
+      acceptsRequestOrigin(
+        "http://localhost:5173",
+        expected,
+        false,
+        "127.0.0.1",
+      ),
+    ).toBe(false);
+    expect(
+      acceptsRequestOrigin("http://localhost:5173", expected, true, undefined),
+    ).toBe(false);
+    expect(
+      acceptsRequestOrigin(
+        "http://localhost:5173",
+        expected,
+        true,
+        "::ffff:127.0.0.1",
+      ),
+    ).toBe(true);
   });
 });

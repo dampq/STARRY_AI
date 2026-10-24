@@ -17,6 +17,7 @@ import {
 } from "./agents/storyteller.js";
 import { GeminiProvider } from "./agents/gemini.js";
 import type { AIProviderName } from "./ai-config.js";
+import { acceptsRequestOrigin } from "./runtime-config.js";
 export interface AppConfig {
   trustLocalProxy?: boolean;
   provider?: AIProviderName;
@@ -74,11 +75,16 @@ export function createApp(
     if (
       !["GET", "HEAD", "OPTIONS"].includes(req.method) &&
       req.headers.origin &&
-      req.headers.origin !== config.origin
+      !acceptsRequestOrigin(
+        req.headers.origin,
+        config.origin,
+        Boolean(config.trustLocalProxy),
+        req.socket.remoteAddress,
+      )
     )
-      return res
-        .status(403)
-        .json({ error: "Unrecognized application origin." });
+      return res.status(403).json({
+        error: `Unrecognized application origin. Expected ${config.origin}; received ${req.headers.origin.slice(0, 300)}.`,
+      });
     next();
   });
   const configured = Boolean(
