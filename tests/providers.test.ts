@@ -79,7 +79,9 @@ describe("native Gemini structured adapter", () => {
     expect(options?.signal).toBeInstanceOf(AbortSignal);
     const body = JSON.parse(options!.body as string);
     expect(body.generationConfig.responseMimeType).toBe("application/json");
-    expect(body.generationConfig.responseJsonSchema.required).toContain(
+    expect(body.generationConfig.responseSchema.type).toBe("OBJECT");
+    expect(body.generationConfig).not.toHaveProperty("responseJsonSchema");
+    expect(body.generationConfig.responseSchema.required).toContain(
       "inventory_changes",
     );
     expect(body.systemInstruction.parts[0].text).toContain(
@@ -259,13 +261,15 @@ describe("native Gemini structured adapter", () => {
       }),
     );
     const props = schema.properties as Record<string, Record<string, unknown>>;
-    expect(props.pattern).toEqual({ type: "string" });
+    expect(props.pattern).toEqual({ type: "STRING" });
     expect(
       (props.nested.items as { properties: unknown }).properties,
     ).toHaveProperty("format");
     expect(props.nested).not.toHaveProperty("maxItems");
     expect(props.nested).not.toHaveProperty("minItems");
     expect(schema).not.toHaveProperty("$schema");
+    expect(schema).not.toHaveProperty("additionalProperties");
+    expect(schema.type).toBe("OBJECT");
   });
 });
 describe("OpenAI adapter regression", () => {

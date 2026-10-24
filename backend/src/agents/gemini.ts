@@ -24,57 +24,31 @@ const EnvelopeSchema = z.object({
     .optional(),
 });
 const transient = new Set([429, 500, 502, 503, 504]);
-// Google's REST JSON Schema contract: googleapis/googleapis,
-// google/ai/generativelanguage/v1beta/generative_service.proto (GenerationConfig).
-// String and array bounds stay enforced locally by Zod. Avoid array bounds
-// in the provider schema: combining many bounded nested arrays can exceed
-// Gemini's structured-output grammar complexity, even for a small schema.
-const supported = new Set([
-  "$id",
-  "$defs",
-  "$ref",
-  "$anchor",
-  "type",
-  "format",
-  "title",
-  "description",
-  "enum",
-  "items",
-  "prefixItems",
-  "minimum",
-  "maximum",
-  "anyOf",
-  "oneOf",
-  "properties",
-  "additionalProperties",
-  "required",
-]);
+// Use the stable native responseSchema format. String/array bounds and strict
+// object validation remain enforced locally by Zod before state can be saved.
 export function geminiSchema(schema: z.ZodType): Record<string, unknown> {
   function convert(value: unknown): unknown {
-    if (Array.isArray(value)) return value.map(convert);
-    if (!value || typeof value !== "object") return value;
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([key]) => supported.has(key))
-        .map(([key, item]) => [
-          key,
-          key === "properties" || key === "$defs"
-            ? Object.fromEntries(
-                Object.entries(item as Record<string, unknown>).map(
-                  ([name, child]) => [name, convert(child)],
-                ),
-              )
-            : [
-                  "items",
-                  "prefixItems",
-                  "anyOf",
-                  "oneOf",
-                  "additionalProperties",
-                ].includes(key)
-              ? convert(item)
-              : item,
-        ]),
-    );
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      return value;
+    const node = value as Record<string, unknown>;
+    if (node.$ref || node.anyOf || node.oneOf || Array.isArray(node.type)) {
+      throw new Error(
+        "The Gemini native schema adapter requires inline, non-union story schemas.",
+      );
+    }
+    const result: Record<string, unknown> = {};
+    if (typeof node.type === "string") result.type = node.type.toUpperCase();
+    if (node.description) result.description = node.description;
+    if (node.enum) result.enum = node.enum;
+    if (node.required) result.required = node.required;
+    if (node.properties)
+      result.properties = Object.fromEntries(
+        Object.entries(node.properties as Record<string, unknown>).map(
+          ([name, child]) => [name, convert(child)],
+        ),
+      );
+    if (node.items) result.items = convert(node.items);
+    return result;
   }
   return convert(z.toJSONSchema(schema)) as Record<string, unknown>;
 }
@@ -110,7 +84,7 @@ export class GeminiProvider extends StructuredProvider {
       contents: [{ role: "user", parts: [{ text: content }] }],
       generationConfig: {
         responseMimeType: "application/json",
-        responseJsonSchema: geminiSchema(schema),
+        responseSchema: geminiSchema(schema),
         maxOutputTokens: name === "scene" ? 8192 : 4096,
         // 2.5 Flash permits disabling thinking; never request or expose thought parts.
         ...(this.model === "gemini-2.5-flash" ||
