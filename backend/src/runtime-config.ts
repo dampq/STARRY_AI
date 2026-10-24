@@ -10,7 +10,20 @@ export function codespacesHostname(env: Record<string, string | undefined>) {
   return `${name}-5173.${domain}`;
 }
 export function readAppOrigin(env: Record<string, string | undefined>) {
-  if (env.APP_ORIGIN) return env.APP_ORIGIN;
+  // An inherited/local .env APP_ORIGIN must not override this Codespace's
+  // exact forwarded address. Only this instance's port 5173 is trusted.
   const hostname = codespacesHostname(env);
-  return hostname ? `https://${hostname}` : "http://localhost:5173";
+  if (hostname) return `https://${hostname}`;
+  if (!env.APP_ORIGIN) return "http://localhost:5173";
+  const configured = new URL(env.APP_ORIGIN);
+  if (
+    !["https:", "http:"].includes(configured.protocol) ||
+    configured.username ||
+    configured.password
+  ) {
+    throw new Error(
+      "APP_ORIGIN must be an HTTP(S) application URL without credentials.",
+    );
+  }
+  return configured.origin;
 }

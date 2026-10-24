@@ -18,6 +18,7 @@ import {
 import { GeminiProvider } from "./agents/gemini.js";
 import type { AIProviderName } from "./ai-config.js";
 export interface AppConfig {
+  trustLocalProxy?: boolean;
   provider?: AIProviderName;
   geminiKey?: string;
   supabaseUrl?: string;
@@ -35,6 +36,9 @@ export function createApp(
 ) {
   const app = express();
   app.disable("x-powered-by");
+  // In Codespaces, Vite proxies /api over loopback. Trust only that local
+  // transport, never arbitrary remote callers or every forwarded hop.
+  if (config.trustLocalProxy) app.set("trust proxy", "loopback");
   app.use(
     helmet({
       contentSecurityPolicy: {

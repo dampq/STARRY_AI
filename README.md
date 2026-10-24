@@ -20,7 +20,7 @@ You do not need to download this project or install Node on your PC.
    AI_PROVIDER=gemini npm run dev
    ```
 
-   The default Gemini model is `gemini-3.8-flash`, verified during setup. Set `GEMINI_MODEL` if your project needs another supported model. **Do not copy the localhost `APP_ORIGIN` value into Codespaces**: the app automatically derives the exact forwarded HTTPS origin from the Codespaces environment. If an old `.env` sets `APP_ORIGIN`, remove that setting or replace it with your exact forwarded frontend origin.
+   The default Gemini model is `gemini-3.8-flash`, verified during setup. Set `GEMINI_MODEL` if your project needs another supported model. The app automatically derives and trusts this Codespace’s exact forwarded HTTPS origin, even if an old `.env` or secret sets `APP_ORIGIN` to localhost or another Codespace. Outside Codespaces, `APP_ORIGIN` still controls the deployment address. Port 5173 is fixed for this development workflow; an occupied port produces an explicit error rather than silently switching ports. The API prints its chosen application origin at startup. In Codespaces it trusts only the loopback Vite proxy for forwarded headers, while other deployments keep proxy trust disabled until explicitly configured.
 
 4. Open the **Ports** tab, find **5173**, and click **Open in Browser**. Keep the port **Private** unless you intentionally want to expose the development app. Port 3001 stays internal; the frontend proxies API requests to it.
 5. Copy the forwarded port 5173 HTTPS address. In Supabase → **Authentication → URL Configuration**, add that address plus `/dashboard` and `/settings` as exact allowed redirect URLs (for example `https://YOUR-CODESPACE-5173.app.github.dev/dashboard`). For a Codespaces-only project, use the forwarded frontend origin as the Site URL; preserve an existing production Site URL if other deployments use the same project. Redirect URLs change if you create a new Codespace.
@@ -202,7 +202,7 @@ For a custom action, replace `choiceId` with `action`. The server resolves sugge
 1. Apply the Supabase migration and configure auth redirect URLs for the production HTTPS origin.
 2. Install with `npm ci`, set **only public** `VITE_SUPABASE_*` variables for the build, then run `npm run build`.
 3. Inject backend variables securely at runtime and set `APP_ORIGIN=https://your-app-domain.example`. Run `npm start` from the project root with a supported Node version.
-4. Terminate HTTPS at your platform/reverse proxy; route all application paths to this Node service so client-side routes fall back to the frontend. Keep `/api` same-origin. Set an appropriate long request timeout for generation. Only enable Express `trust proxy` after configuring the exact trusted proxy topology; it is deliberately off by default.
+4. Terminate HTTPS at your platform/reverse proxy; route all application paths to this Node service so client-side routes fall back to the frontend. Keep `/api` same-origin. Set an appropriate long request timeout for generation. Only enable Express `trust proxy` after configuring the exact trusted proxy topology; it is deliberately off by default outside Codespaces; Codespaces trusts only the loopback frontend proxy.
 5. Restrict runtime egress to the required provider/project hosts and monitor costs and failures without logging authorization headers, prompts, private story text, or keys. Configure database backups and restoration tests.
 
 ### Docker
