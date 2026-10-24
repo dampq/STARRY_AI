@@ -2,6 +2,12 @@ import { z } from "zod";
 import { AppError } from "../domain.js";
 import { StructuredProvider } from "./storyteller.js";
 import { systemPrompt } from "./prompts.js";
+import {
+  GeminiCooldownError,
+  quotaCooldown,
+  sharedGeminiGate,
+  type GeminiGate,
+} from "./gemini-limits.js";
 
 const EnvelopeSchema = z.object({
   promptFeedback: z.object({ blockReason: z.string().optional() }).optional(),
@@ -23,7 +29,7 @@ const EnvelopeSchema = z.object({
     )
     .optional(),
 });
-const transient = new Set([429, 500, 502, 503, 504]);
+const transient = new Set([500, 502, 503, 504]);
 // Use the stable native responseSchema format. String/array bounds and strict
 // object validation remain enforced locally by Zod before state can be saved.
 export function geminiSchema(schema: z.ZodType): Record<string, unknown> {
@@ -54,16 +60,21 @@ export function geminiSchema(schema: z.ZodType): Record<string, unknown> {
 }
 
 export class GeminiProvider extends StructuredProvider {
+  private gate?: GeminiGate;
   constructor(
     private apiKey: string,
     private model: string,
     private transport: typeof fetch = fetch,
+    private options: { freeTier?: boolean; gate?: GeminiGate } = {},
   ) {
     super();
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(model))
       throw new Error(
         "GEMINI_MODEL must be a Gemini model ID, not a URL or path.",
       );
+    this.gate =
+      options.gate ||
+      (options.freeTier ? sharedGeminiGate(apiKey, model) : undefined);
   }
   protected async call<T extends z.ZodType>(
     schema: T,
@@ -85,7 +96,8 @@ export class GeminiProvider extends StructuredProvider {
       generationConfig: {
         responseMimeType: "application/json",
         responseSchema: geminiSchema(schema),
-        maxOutputTokens: name === "scene" ? 8192 : 4096,
+        maxOutputTokens:
+          name === "scene" || name === "planned_scene" ? 8192 : 4096,
         // 2.5 Flash permits disabling thinking; never request or expose thought parts.
         ...(this.model === "gemini-2.5-flash" ||
         this.model.startsWith("gemini-2.5-flash-")
@@ -93,7 +105,9 @@ export class GeminiProvider extends StructuredProvider {
           : {}),
       },
     });
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const maxAttempts = this.options.freeTier ? 1 : 2;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await this.gate?.reserve();
       let response: Response;
       try {
         response = await this.transport(
@@ -110,16 +124,26 @@ export class GeminiProvider extends StructuredProvider {
           },
         );
       } catch {
-        if (attempt === 0) continue;
+        if (attempt + 1 < maxAttempts) continue;
         throw new AppError(
           502,
           "Gemini could not be reached or timed out. Your saved chapters are unchanged. Please retry shortly.",
         );
       }
       if (!response.ok) {
-        // Provider bodies can contain prompts or credentials; never log or surface them.
+        // Read only quota metadata; never log or surface provider bodies.
+        if (response.status === 429) {
+          const payload = await response.json().catch(() => null);
+          const cooldown = quotaCooldown(
+            payload,
+            response.headers.get("retry-after"),
+            Date.now(),
+          );
+          await this.gate?.block(cooldown.until, cooldown.reason);
+          throw new GeminiCooldownError(cooldown.until, cooldown.reason);
+        }
         await response.body?.cancel();
-        if (transient.has(response.status) && attempt === 0) {
+        if (transient.has(response.status) && attempt + 1 < maxAttempts) {
           await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
@@ -127,11 +151,6 @@ export class GeminiProvider extends StructuredProvider {
           throw new AppError(
             503,
             "Gemini access was denied. Check the backend Gemini key and API access in environment settings.",
-          );
-        if (response.status === 429)
-          throw new AppError(
-            429,
-            "Gemini quota or rate limit reached. Check your project quota and retry later.",
           );
         if (response.status === 400 || response.status === 404)
           throw new AppError(

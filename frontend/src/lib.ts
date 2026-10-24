@@ -36,6 +36,10 @@ if (supabase) {
     if (!changed) useSession.getState().set(error ? null : data.session);
   });
 }
+export const useProviderCooldown = create<{
+  until: number;
+  set: (until: number) => void;
+}>((set) => ({ until: 0, set: (until) => set({ until }) }));
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -63,6 +67,15 @@ export async function api<T>(
       : await response.json().catch(() => ({
           error: "The server returned an unreadable response.",
         }));
+  if (
+    !response.ok &&
+    data?.code === "GEMINI_COOLDOWN" &&
+    typeof data.retryAt === "number" &&
+    Number.isFinite(data.retryAt) &&
+    data.retryAt > Date.now()
+  ) {
+    useProviderCooldown.getState().set(data.retryAt);
+  }
   if (!response.ok)
     throw new ApiError(
       response.status,
@@ -74,6 +87,7 @@ export const post = <T>(path: string, body: unknown) =>
   api<T>(path, { method: "POST", body: JSON.stringify(body) });
 export type Health = {
   provider?: "openai" | "gemini";
+  generationMode?: "free_tier" | "standard";
   status: string;
   auth: boolean;
   storage: boolean;

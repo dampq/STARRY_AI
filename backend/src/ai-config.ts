@@ -6,6 +6,12 @@ export function readAIConfig(env: Record<string, string | undefined>) {
     .parse(env.AI_PROVIDER || "openai");
   return {
     provider,
+    generationMode: z
+      .enum(["free_tier", "standard"])
+      .parse(
+        env.AI_GENERATION_MODE ||
+          (provider === "gemini" ? "free_tier" : "standard"),
+      ),
     model:
       provider === "gemini"
         ? env.GEMINI_MODEL || "gemini-3.8-flash"

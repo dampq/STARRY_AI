@@ -1,3 +1,7 @@
+import {
+  GenerationCooldownNotice,
+  useGeminiCooldown,
+} from "../components/GenerationCooldown";
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -294,6 +298,7 @@ export default function StoryPage({
 }: {
   view?: "reader" | "universe" | "characters" | "timeline" | "constellation";
 }) {
+  const cooldown = useGeminiCooldown();
   const { id } = useParams();
   const [params, setParams] = useSearchParams();
   const client = useQueryClient();
@@ -676,7 +681,9 @@ export default function StoryPage({
                 </p>
                 <Button
                   disabled={
-                    generation.isPending || bundle.story.status === "archived"
+                    generation.isPending ||
+                    cooldown.blocked ||
+                    bundle.story.status === "archived"
                   }
                   onClick={() => generation.mutate(undefined)}
                 >
@@ -736,6 +743,7 @@ export default function StoryPage({
                         {scene.choices.map((c, i) => (
                           <button
                             key={c.id}
+                            disabled={cooldown.blocked}
                             onClick={() => generation.mutate(c.id)}
                           >
                             <span>{String.fromCharCode(65 + i)}</span>
@@ -748,7 +756,7 @@ export default function StoryPage({
                         className="custom-action"
                         onSubmit={(e) => {
                           e.preventDefault();
-                          generation.mutate(undefined);
+                          if (!cooldown.blocked) generation.mutate(undefined);
                         }}
                       >
                         <Field label="Or write your own next move…">
@@ -762,7 +770,10 @@ export default function StoryPage({
                             rows={3}
                           />
                         </Field>
-                        <Button type="submit" disabled={!action.trim()}>
+                        <Button
+                          type="submit"
+                          disabled={!action.trim() || cooldown.blocked}
+                        >
                           <FeatherIcon />
                           Continue Story
                           <ArrowRight size={16} />
@@ -773,6 +784,7 @@ export default function StoryPage({
                 </section>
               )
             )}
+            <GenerationCooldownNotice cooldown={cooldown} />
             {generation.error && <ErrorBox error={generation.error} />}
           </div>
         </div>

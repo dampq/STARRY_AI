@@ -1,4 +1,19 @@
 import { test, expect } from "@playwright/test";
+test.beforeEach(async ({ page }) => {
+  await page.route("**/api/health", (route) =>
+    route.fulfill({
+      json: {
+        status: "setup_required",
+        auth: false,
+        storage: false,
+        ai: false,
+        provider: "gemini",
+        generationMode: "free_tier",
+        model: "test-fixture",
+      },
+    }),
+  );
+});
 test("landing, editorial showcase, protected navigation, and setup state", async ({
   page,
 }, info) => {

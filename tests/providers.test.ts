@@ -205,7 +205,7 @@ describe("native Gemini structured adapter", () => {
     await expect(
       new GeminiProvider("test-key", "gemini-2.5-flash", limited).plan({}),
     ).rejects.toMatchObject({ status: 429 });
-    expect(limited).toHaveBeenCalledTimes(2);
+    expect(limited).toHaveBeenCalledTimes(1);
     const offline = transport().mockRejectedValue(
       new Error("Network error with sensitive details"),
     );

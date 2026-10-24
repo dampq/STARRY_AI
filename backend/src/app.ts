@@ -16,9 +16,11 @@ import {
   type CreativeProvider,
 } from "./agents/storyteller.js";
 import { GeminiProvider } from "./agents/gemini.js";
+import { GeminiCooldownError } from "./agents/gemini-limits.js";
 import type { AIProviderName } from "./ai-config.js";
 import { acceptsRequestOrigin } from "./runtime-config.js";
 export interface AppConfig {
+  generationMode?: "free_tier" | "standard";
   trustLocalProxy?: boolean;
   provider?: AIProviderName;
   geminiKey?: string;
@@ -95,11 +97,16 @@ export function createApp(
         auth: { persistSession: false, autoRefreshToken: false },
       })
     : null;
+  const generationMode =
+    config.generationMode ||
+    (config.provider === "gemini" ? "free_tier" : "standard");
   const provider =
     overrideProvider ||
     (config.provider === "gemini"
       ? config.geminiKey
-        ? new GeminiProvider(config.geminiKey, config.model)
+        ? new GeminiProvider(config.geminiKey, config.model, fetch, {
+            freeTier: generationMode === "free_tier",
+          })
         : null
       : config.openaiKey
         ? new OpenAIProvider(config.openaiKey, config.model)
@@ -121,6 +128,7 @@ export function createApp(
       ai: Boolean(provider),
       provider: config.provider || "openai",
       model: config.model,
+      generationMode,
     });
   });
   app.use("/api", async (req: Request, res: Response, next: NextFunction) => {
@@ -332,6 +340,7 @@ export function createApp(
         state,
         path,
         action,
+        { mode: generationMode },
       );
       const sceneId = await rpc<string>(s.admin, "commit_generation", {
         p_user_id: s.userId,
@@ -481,6 +490,19 @@ export function createApp(
             message: i.message,
           })),
         });
+      if (error instanceof GeminiCooldownError) {
+        res.setHeader(
+          "Retry-After",
+          String(Math.max(1, Math.ceil((error.retryAt - Date.now()) / 1000))),
+        );
+        return res
+          .status(429)
+          .json({
+            error: error.message,
+            code: "GEMINI_COOLDOWN",
+            retryAt: error.retryAt,
+          });
+      }
       if (error instanceof AppError)
         return res.status(error.status).json({ error: error.message });
       if (error instanceof SyntaxError && "body" in error)

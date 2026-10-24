@@ -12,6 +12,10 @@ import {
 import { ConfigSchema, type StoryConfig } from "../../../backend/src/domain";
 import { api, post, type Health } from "../lib";
 import { Button, Field, ErrorBox, Loading } from "../components/ui";
+import {
+  GenerationCooldownNotice,
+  useGeminiCooldown,
+} from "../components/GenerationCooldown";
 import { SetupNotice } from "./Auth";
 const ideas = [
   {
@@ -44,6 +48,7 @@ const ideas = [
   },
 ] as const;
 export default function CreateStory() {
+  const cooldown = useGeminiCooldown();
   const [params] = useSearchParams();
   const premise = Number(params.get("premise") || 0);
   const idea = ideas[premise % ideas.length] || ideas[0];
@@ -119,7 +124,7 @@ export default function CreateStory() {
         className="create-layout"
         onSubmit={(e) => {
           e.preventDefault();
-          generation.mutate();
+          if (!cooldown.blocked) generation.mutate();
         }}
       >
         <div className="create-main">
@@ -348,7 +353,11 @@ export default function CreateStory() {
             <Button
               type="submit"
               className="full"
-              disabled={generation.isPending || health.data?.status !== "ready"}
+              disabled={
+                generation.isPending ||
+                health.data?.status !== "ready" ||
+                cooldown.blocked
+              }
             >
               <Sparkles size={17} />
               {generation.isPending
@@ -373,6 +382,14 @@ export default function CreateStory() {
               <Loading text="Planning, writing, and checking continuity. This can take a few minutes." />
             )}
             {validation && <ErrorBox error={validation} />}
+            {health.data?.provider === "gemini" &&
+              health.data.generationMode === "free_tier" && (
+                <p className="quiet-note">
+                  Free-tier mode: normally 2 AI requests per chapter, spaced at
+                  least 15 seconds apart.
+                </p>
+              )}
+            <GenerationCooldownNotice cooldown={cooldown} />
             {generation.error && <ErrorBox error={generation.error} />}
           </div>
           <div className="aside-quote">

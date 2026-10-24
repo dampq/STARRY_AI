@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { authenticateFixture } from "./fixtures";
 // UI-only fixtures. Actual canonical mutations and RLS are tested against PostgreSQL separately.
 const sid = "11111111-1111-4111-8111-111111111111",
   bid = "22222222-2222-4222-8222-222222222222",
@@ -6,6 +7,7 @@ const sid = "11111111-1111-4111-8111-111111111111",
 test("create, continue, revisit, branch, inspect memory, bookmark, and export", async ({
   page,
 }, info) => {
+  await page.clock.install();
   const now = new Date().toISOString();
   const state = {
     currentLocation: "origin",
@@ -60,40 +62,7 @@ test("create, continue, revisit, branch, inspect memory, bookmark, and export", 
   const bookmarks: any[] = [];
   let generationCount = 0;
   const actions: any[] = [];
-  await page.addInitScript(
-    ({ uid }) => {
-      const user = {
-        id: uid,
-        aud: "authenticated",
-        role: "authenticated",
-        email: "reader@example.test",
-        app_metadata: { provider: "email" },
-        user_metadata: { display_name: "Elara" },
-        created_at: new Date().toISOString(),
-      };
-      const jwt =
-        "eyJhbGciOiJIUzI1NiJ9." +
-        btoa(
-          JSON.stringify({
-            sub: uid,
-            exp: Math.floor(Date.now() / 1000) + 3600,
-          }),
-        ) +
-        ".test-signature";
-      localStorage.setItem(
-        "sb-127-auth-token",
-        JSON.stringify({
-          access_token: jwt,
-          refresh_token: "test-only-refresh",
-          token_type: "bearer",
-          expires_in: 3600,
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
-          user,
-        }),
-      );
-    },
-    { uid },
-  );
+  await authenticateFixture(page, uid);
   await page.route("**/api/**", async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -314,5 +283,112 @@ test("create, continue, revisit, branch, inspect memory, bookmark, and export", 
   expect(await page.evaluate(() => document.activeElement?.className)).not.toBe(
     "skip-link",
   );
+  let quotaAttempts = 0;
+  await page.route(`**/api/stories/${sid}/continue`, async (route) => {
+    quotaAttempts++;
+    await route.fulfill({
+      status: 429,
+      json: {
+        error: "Gemini's request limit was reached.",
+        code: "GEMINI_COOLDOWN",
+        retryAt: Date.now() + 90000,
+      },
+    });
+  });
+  await page
+    .getByRole("button", { name: /Help the stranger on the pier/ })
+    .click();
+  await expect(page.getByRole("note")).toContainText("Gemini cooldown");
+  await expect(
+    page.getByRole("button", { name: /Help the stranger on the pier/ }),
+  ).toBeDisabled();
+  await page
+    .getByLabel("Or write your own next move…")
+    .fill("Wait by the harbor");
+  await expect(
+    page.getByRole("button", { name: "Continue Story" }),
+  ).toBeDisabled();
+  await page.getByRole("link", { name: "Begin Your Story" }).first().click();
+  await expect(
+    page.getByRole("button", { name: "Generate My Story" }),
+  ).toBeDisabled();
+  await expect(page.getByRole("note")).toContainText("Your draft is saved");
+  await page.goBack();
+  await page.clock.fastForward(91000);
+  await expect(
+    page.getByRole("button", { name: /Help the stranger on the pier/ }),
+  ).toBeEnabled();
+  await expect(page.getByRole("note")).not.toBeVisible();
+  expect(quotaAttempts).toBe(1);
   expect(errors).toEqual([]);
+});
+
+test("opening cooldown preserves one saved draft and reuses its request ID", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await authenticateFixture(page, uid);
+  let drafts = 0;
+  const attempts: string[] = [];
+  await page.route("**/api/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/health")
+      return route.fulfill({
+        json: {
+          status: "ready",
+          auth: true,
+          storage: true,
+          ai: true,
+          provider: "gemini",
+          generationMode: "free_tier",
+          model: "test-fixture",
+        },
+      });
+    if (
+      url.pathname === "/api/stories" &&
+      route.request().method() === "POST"
+    ) {
+      drafts++;
+      return route.fulfill({ json: { id: sid, branchId: bid } });
+    }
+    if (url.pathname.endsWith("/start")) {
+      attempts.push(route.request().postDataJSON().requestId);
+      if (attempts.length === 1)
+        return route.fulfill({
+          status: 429,
+          json: {
+            error: "Gemini cooldown",
+            code: "GEMINI_COOLDOWN",
+            retryAt: Date.now() + 60000,
+          },
+        });
+      return route.fulfill({
+        json: { sceneId: "44444444-4444-4444-8444-000000000001" },
+      });
+    }
+    return route.fulfill({
+      status: 503,
+      json: { error: "Test stops after successful retry." },
+    });
+  });
+  await page.goto("/create");
+  await page
+    .getByLabel("Your story’s spark *")
+    .fill("A dragon opens a bakery in a quiet mountain village.");
+  await page.getByLabel("Main character’s name *").fill("Elara");
+  await page.getByRole("button", { name: "Generate My Story" }).click();
+  await expect(
+    page.getByRole("button", { name: "Retry opening chapter" }),
+  ).toBeDisabled();
+  await expect(page.getByRole("note")).toContainText("Gemini cooldown");
+  expect(drafts).toBe(1);
+  expect(attempts).toHaveLength(1);
+  await page.clock.fastForward(61000);
+  await expect(
+    page.getByRole("button", { name: "Retry opening chapter" }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Retry opening chapter" }).click();
+  await expect.poll(() => attempts.length).toBe(2);
+  expect(attempts[0]).toBe(attempts[1]);
+  expect(drafts).toBe(1);
 });
